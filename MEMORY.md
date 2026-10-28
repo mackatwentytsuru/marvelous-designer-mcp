@@ -31,7 +31,7 @@ LLM ──MCP/stdio──▶ src/marvelous_designer_mcp (FastMCP)
 | Python listener (v0.1.0) | **Works.** Blocking main-thread server. MD's GUI freezes while running; `shutdown_listener` releases it. |
 | Plug-in auto-registration (`scripts/install_md_plugin.py`, v0.2.0) | **Works.** Idempotently writes MD's `pluginSettings.json` so the launcher appears under `Plugins ▸ Plug-in`. |
 | MCP tool wrappers | 10 typed tools (`scene_info`, `list_patterns`, `list_fabrics`, `assign_fabric`, `import_project`, `export_project`, `simulate`, `md_api`, plus `ping`, `shutdown_listener`) + `execute_python` for arbitrary code. All verified live against `HarukoMD2.zprj` (7 patterns, 2 fabrics, Alembic avatar). |
-| C++ non-freezing plugin (`cpp_plugin/`) | **Code builds, doesn't load in MD.** Reserved for CLO 3D and for a hypothetical future MD that adds DLL loading. See `cpp_plugin/README.md`. |
+| C++ non-freezing plugin | **Removed** (this fork): MD does not load DLLs, so it was dead code. See the original repo history if needed. |
 
 ## Key non-obvious facts (do not re-derive — verified empirically)
 
@@ -43,7 +43,7 @@ LLM ──MCP/stdio──▶ src/marvelous_designer_mcp (FastMCP)
    `.dll`s anywhere we could find, and `Plug-in Manager ▸ +ADD` filters to
    `Plug-in File (*.py)`. The CLO 3D feature "DLL discovery still scans the
    main Plugins folder" is not present in MD. Verified with a zero-dep probe
-   DLL (`cpp_plugin/probe.cpp`) that never logged and never appeared in MD's
+   DLL (since removed from this fork) that never logged and never appeared in MD's
    loaded modules. MD's own `New Assets/api_plugin_log.txt` only mentions
    Python folder scans.
 3. **MD doesn't load `CLOAPIInterface.dll`** at all — the bridge that the CLO
@@ -80,8 +80,6 @@ LLM ──MCP/stdio──▶ src/marvelous_designer_mcp (FastMCP)
 | MD plugins folder | `C:\Users\Public\Documents\MarvelousDesigner\Plugins\` |
 | MD plugin log | `C:\Users\Public\Documents\MarvelousDesigner\New Assets\api_plugin_log.txt` |
 | Listener log | `~/md_mcp_listener.log` |
-| CLO C++ SDK (installed but MD-incompatible) | `C:\Users\azoo\SDK\CLO_SDK_v2026.0.238\CLO_SDK_v2026.0.238_Win\` |
-| Qt for C++ build | `C:\Qt\6.10.3\msvc2022_64\` (only relevant for CLO 3D) |
 
 ## Repo layout
 
@@ -97,7 +95,7 @@ scripts/
 ├── md_start_listener.py    paste-or-register-as-plugin launcher
 ├── install_md_plugin.py    auto-write pluginSettings.json
 └── probe_as_plugin.py      (legacy) Plug-in Manager API probe
-cpp_plugin/                  experimental C++ plugin (CLO 3D only)
+tests/                       pytest suite (fake listener on a random port)
 README.md
 MEMORY.md                    this file
 pyproject.toml / uv.lock
@@ -111,9 +109,7 @@ pyproject.toml / uv.lock
   changes between MD versions (function names, signatures, new modules).
   `execute_python` lets you `import xxx_api; print(dir(xxx_api))` to map the
   delta.
-- The C++ path: only worth resurrecting if (a) CLO Virtual Fashion adds DLL
-  loading to MD, or (b) the goal moves to CLO 3D. The existing `cpp_plugin/`
-  builds and is set up to receive new wrapper methods one by one.
+- The C++ path (removed from this fork) is only worth reviving if MD adds DLL loading.
 - Areas not implemented and not gated on MD limitations: rendering wrappers
   (`export_api.ExportTurntableImages` etc), techpack export, multi-colorway
   handling, avatar import flows.
@@ -126,8 +122,8 @@ pyproject.toml / uv.lock
   PySide/PyQt/sip; no Qt bindings reachable from MD's Python.
 - **CLO Event Plugin** as a non-freezing path — C++ only, mouse-drop events
   only, no idle/tick hook. Not useful as a server vehicle.
-- **C++ plugin DLL in MD's Plugins folder** (`cpp_plugin/`) — MD ignores
-  `.dll`s entirely (#2). Code preserved for CLO 3D / future MD support.
+- **C++ plugin DLL in MD's Plugins folder** (removed from this fork) — MD ignores
+  `.dll`s entirely (#2).
 - **Pipelined requests on a single TCP connection** — `WinError 10053` on
   Windows (#6). The bridge uses one connection per call.
 
@@ -137,5 +133,5 @@ pyproject.toml / uv.lock
 |---|---|
 | `C:\Users\Public\Documents\MarvelousDesigner\Plugins\pluginSettings.json` | MD's plugin registry; the auto-installer edits it |
 | `C:\Users\Public\Documents\MarvelousDesigner\New Assets\api_plugin_log.txt` | MD's own plugin loader log — useful when nothing seems to happen |
-| `~/md_mcp_listener.log` | Our listener's status / errors (Python + C++ both append here) |
-| `~/md_mcp_probe.log` | Output from the C++ probe DLL diagnostic (not produced on MD) |
+| `~/md_mcp_listener.log` | Our listener's status / errors (appended by the launcher script) |
+| `%LOCALAPPDATA%\marvelous-designer-mcp\token` | Per-session listener token (deleted when the listener stops) |

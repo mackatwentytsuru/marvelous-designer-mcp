@@ -1,5 +1,10 @@
 # marvelous-designer-mcp
 
+> Hardened fork of [ysk424/marvelous-designer-mcp](https://github.com/ysk424/marvelous-designer-mcp)
+> (MIT). All credit for the original design and implementation goes to its author,
+> ysk424. This fork adds token authentication, an exclusive port bind, request
+> limits, a safer installer and tests; see [Security](#security).
+
 A [Model Context Protocol](https://modelcontextprotocol.io/) server that lets an
 LLM (e.g. Claude) drive **Marvelous Designer** (and CLO, which shares the same
 Python API) by running code inside MD's embedded Python interpreter.
@@ -34,7 +39,7 @@ the `shutdown_listener` tool (or by closing MD).
 ## Setup
 
 ```powershell
-git clone https://github.com/ysk424/marvelous-designer-mcp.git
+git clone https://github.com/mackatwentytsuru/marvelous-designer-mcp.git
 cd marvelous-designer-mcp
 uv sync
 ```
@@ -129,11 +134,9 @@ uses, which is MD's GUI thread. Empirically (verified live), API calls work
 fine while the GUI is frozen because they are synchronous main-thread calls;
 the GUI just doesn't repaint or accept input until the listener returns.
 
-The "right" fix is a C++ plugin (Qt-based, worker thread + queued connection
-back to the main thread). We built and tested that for CLO 3D's plugin model
-in `cpp_plugin/` — but **MD's loader scans only `.py` files** and ignores
-`.dll`s entirely (verified with a zero-dep probe DLL). The C++ code is kept
-for CLO 3D and for the day MD adds a `.dll` loader; see `cpp_plugin/README.md`.
+A C++ plugin could avoid the freeze, but **MD's loader scans only `.py` files**
+and ignores `.dll`s entirely (verified with a zero-dep probe DLL), so the unused
+C++ plugin was removed from this fork.
 
 ## Caveats
 
@@ -146,7 +149,6 @@ for CLO 3D and for the day MD adds a `.dll` loader; see `cpp_plugin/README.md`.
 - **Heavy ops are slow.** Exporting a large `.zprj` (e.g. with an embedded Alembic
   animation), simulation and rendering can take a long time; the bridge timeout
   defaults to 120s — raise `MD_MCP_TIMEOUT` (seconds) for very long renders.
-- **localhost only.** The listener binds `127.0.0.1`; it is not exposed to the network.
 - Generated MD code must `import` the `*_api` module(s) it uses (they are not
   globals) and bind output to `result`. The API is pybind11-based.
 
@@ -158,8 +160,45 @@ for CLO 3D and for the day MD adds a `.dll` loader; see `cpp_plugin/README.md`.
 | `MD_MCP_PORT` | `7421` | listener port |
 | `MD_MCP_TIMEOUT` | `120.0` | bridge socket timeout, seconds |
 
-(The listener side's host/port are constants in `md_addon/md_listener.py` — keep
-them in sync if you change the defaults.)
+`MD_MCP_TOKEN_FILE` — token file path (both sides). The listener's host/port are
+constants in `md_addon/md_listener.py` — keep them in sync if you change the defaults.
+
+## Security
+
+This server **executes arbitrary Python inside Marvelous Designer by design**
+(`execute_python`). Anything that can talk to the listener has full control of
+MD and of your user account's files.
+
+- **Localhost only.** The listener binds `127.0.0.1`, never a network interface.
+- **Token on every request.** When the listener starts it generates a random
+  token (`secrets.token_urlsafe`) and writes it to
+  `%LOCALAPPDATA%\marvelous-designer-mcp\token` (override with
+  `MD_MCP_TOKEN_FILE`; on Windows the file is restricted to the current user with
+  `icacls`). Every request, including `shutdown`, must carry it; it is compared
+  with `hmac.compare_digest`. The MCP server reads the same file, so both must run
+  as the same user. The file is deleted when the listener stops, and a new token is
+  made on each start.
+- **Exclusive port.** On Windows the listener uses `SO_EXCLUSIVEADDRUSE`, so no
+  other process can take over port 7421. Starting a second listener fails with
+  "already running" and leaves the running one's token untouched.
+- **Limits.** 5 s receive timeout per connection, 16 MB request cap, one request
+  per connection. `sys.exit()` or any other `BaseException` in user code is caught
+  and returned as an error instead of stopping the listener.
+- Do not expose port 7421 through tunnels or port forwarding, and do not run the
+  listener on a shared machine you do not trust.
+
+## Windows notes
+
+- `Plugins > Python Editor` (Japanese UI: プラグイン > Pythonエディタ) is where you
+  paste and run `scripts/md_start_listener.py`. A pasted copy has no `__file__`:
+  set the environment variable `MD_MCP_ADDON_DIR` to this repo's `md_addon` folder
+  (or fill in `_FALLBACK_ADDON_DIR` at the top of the script) first.
+- `scripts/install_md_plugin.py` edits
+  `C:\Users\Public\Documents\MarvelousDesigner\Plugins\pluginSettings.json`.
+  It makes a timestamped `.bak-*` copy first, writes atomically, keeps other
+  plugins, and prints what it did. `--dry-run` shows the change only.
+- The launcher log is `%USERPROFILE%\md_mcp_listener.log`.
+- Tests: `uv sync --group dev`, then `uv run pytest`.
 
 ## Uninstall
 
