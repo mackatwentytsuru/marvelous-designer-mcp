@@ -215,7 +215,9 @@ def test_busy_marker_during_execute_and_cleanup(listener, code):
     assert not marker.exists()
 
 
-def test_bridge_timeout_reports_busy(listener):
+def test_bridge_timeout_reports_busy(listener, monkeypatch):
+    # Unit tests must not inspect a real application's UI.
+    monkeypatch.setattr(bridge.winui, "dialogs", lambda **kwargs: [])
     with pytest.raises(bridge.BridgeError, match="listener busy with execute_python since "):
         bridge.call("execute_python", {"code": "import time; time.sleep(1)"}, timeout=0.2)
     assert bridge.call("ping") == {"pong": True}

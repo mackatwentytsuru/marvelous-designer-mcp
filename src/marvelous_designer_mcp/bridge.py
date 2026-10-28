@@ -5,6 +5,7 @@ import uuid
 from typing import Any
 
 from .config import MD_HOST, MD_PORT, MD_TIMEOUT, token_path
+from . import winui
 
 
 class BridgeError(RuntimeError):
@@ -62,6 +63,14 @@ def call(method: str, params: dict[str, Any] | None = None, *, timeout: float | 
                 detail = f"; listener busy with {busy['method']} since {busy['since']}"
             except (OSError, ValueError, KeyError, TypeError):
                 pass
+            try:
+                dialogs = winui.dialogs(timeout=2.0)
+                candidates = [d for d in dialogs if any(name for name in d.get("buttons", [])) and not d.get("uia_error")]
+                if candidates:
+                    text = candidates[0]["text"][:2000]
+                    detail += f"; possible dialog: '{text}' (check with md_dialogs, then dismiss_dialog)"
+            except Exception:
+                pass  # UI inspection must never hide the original bridge error.
         raise BridgeError(f"cannot talk to listener at {MD_HOST}:{MD_PORT} ({e}){detail}") from e
 
     try:

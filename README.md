@@ -163,8 +163,39 @@ setting is supplied, the omitted setting defaults to 0.
 PNG even while the listener freezes the GUI. Supported views are bottom,
 front-right, front, front-left, right, top, left and back.
 
-An MD modal dialog, such as an avatar import arrangement-point information box,
-blocks the listener until a human clicks OK; the client only sees a timeout.
+## When MD shows a dialog
+
+An MD modal dialog blocks the listener until its button is clicked. On Windows,
+use `md_dialogs()` to read dialog titles, text and button names, then
+`dismiss_dialog(button="OK", index=0)` to invoke one button. These tools run in
+the MCP server, outside MD, so they work independently of the blocked listener.
+Qt buttons are read and invoked through UI Automation, without changing focus
+or sending keys. Names must match exactly, including localized button names.
+Timeout errors also include a best-effort dialog diagnostic.
+
+Detection uses a heuristic: the largest visible non-Python-editor top-level
+window per process is the main window. Owned windows and windows shown while the
+main window is disabled are preferred as dialog candidates; area under half the
+main window is a fallback. Small palettes can match and large unowned dialogs
+can be missed. Python Editor titles and UIA labels are excluded; if UIA cannot
+read a generic-title editor, it may still appear as a candidate with `uia_error`.
+Indexes are ordered by PID/HWND and can change: inspect before
+invoking. No dialogs are dismissed automatically. Recurring meshing errors may
+reappear even while idle; fix the garment rather than repeatedly dismissing them.
+A timeout does not cancel the operation already running in MD.
+
+`screenshot(path, which="main", overwrite=False)` captures physical-pixel PNGs; `which` also accepts
+`"dialog"` or `"all"`. Multiple windows produce files named with the supplied
+stem plus PID and window handle. Paths starting with a backslash are rejected;
+existing files require `overwrite=True`. Minimized windows are rejected. A bounded
+overall time budget limits multi-window captures. The parent directory must exist. PrintWindow
+with PW_RENDERFULLCONTENT captures background windows; a bounded helper falls
+back to screen-copying the window rectangle on failure or timeout. The returned
+method indicates the fallback, which may include occluding windows. GPU surfaces
+may be blank even when PrintWindow reports success. Windows UI tools require an
+interactive desktop and appropriate process permissions; on other OSes they
+return a clear not-supported error. No additional Python dependencies are used.
+
 During an authenticated request the listener writes `busy.json` beside its token
 file, containing only method, request ID and UTC start time. It removes the file
 when the request ends, including errors. Bridge timeout errors include this busy
@@ -189,8 +220,9 @@ C++ plugin was removed from this fork.
   GUI back. For an LLM-driven workflow this is usually fine — Claude does the work.
 - **Modal-dialog deadlock.** Any API call that pops a modal dialog (unsaved-changes
   prompt, error popup, file picker) hangs the listener forever, because MD's GUI
-  thread is stuck in our loop. Recovery: close MD. The wrappers pick dialog-free
-  call variants where possible.
+  thread is blocked. On Windows inspect with `md_dialogs`, then invoke the
+  appropriate button with `dismiss_dialog`. The wrappers pick dialog-free call
+  variants where possible.
 - **Heavy ops are slow.** Exporting a large `.zprj` (e.g. with an embedded Alembic
   animation), simulation and rendering can take a long time; the bridge timeout
   defaults to 120s — raise `MD_MCP_TIMEOUT` (seconds) for very long renders.
@@ -204,6 +236,8 @@ C++ plugin was removed from this fork.
 | `MD_MCP_HOST` | `127.0.0.1` | listener host the bridge connects to |
 | `MD_MCP_PORT` | `7421` | listener port |
 | `MD_MCP_TIMEOUT` | `120.0` | bridge socket timeout, seconds |
+| `MD_MCP_PROCESS` | `MarvelousDesigner*.exe` | Windows UI executable-name wildcard (case insensitive) |
+| `MD_MCP_PID` | unset | explicit positive Windows process ID; selected only when its executable matches `MD_MCP_PROCESS` |
 
 `MD_MCP_TOKEN_FILE` — token file path (both sides). The listener's host/port are
 constants in `md_addon/md_listener.py` — keep them in sync if you change the defaults.

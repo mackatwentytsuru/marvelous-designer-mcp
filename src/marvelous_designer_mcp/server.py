@@ -1,9 +1,59 @@
 from mcp.server.fastmcp import FastMCP
 
-from . import bridge
+from . import bridge, winui
 from .config import MD_HOST, MD_PORT
 
 mcp = FastMCP("marvelous-designer")
+
+
+@mcp.tool()
+def md_dialogs() -> dict:
+    """List Windows MD dialog candidates, UIA text and button names outside MD.
+
+    Works while a modal dialog blocks the listener. Candidates are visible
+    owned windows and windows shown while the main window is disabled are preferred;
+    window area is a fallback. Small palettes may match; large dialogs may be missed.
+    MD_MCP_PROCESS selects executable names; MD_MCP_PID must also match that pattern.
+    UIA errors are reported per dialog. Unsupported on other operating systems.
+    """
+    try:
+        return {"ok": True, "dialogs": winui.dialogs()}
+    except (winui.UIError, OSError, ValueError) as e:
+        return {"ok": False, "error": str(e)}
+
+
+@mcp.tool()
+def dismiss_dialog(button: str = "OK", index: int = 0, hwnd: int | None = None) -> dict:
+    """Invoke one named MD dialog button through Windows UI Automation.
+
+    Qt dialog buttons are exposed through UIA rather than Win32 child controls.
+    No foreground activation, keystrokes or listener call is needed. Button names
+    must match exactly (including localization). Pass hwnd from md_dialogs to target
+    that exact window; otherwise index is from a fresh snapshot ordered by PID/HWND.
+    Invokes once; recurring meshing dialogs require fixing the garment, and a
+    bridge timeout does not cancel its operation. Windows only.
+    """
+    try:
+        return {"ok": True, **winui.dismiss(button, index, hwnd=hwnd)}
+    except (winui.UIError, OSError, ValueError) as e:
+        return {"ok": False, "error": str(e)}
+
+
+@mcp.tool()
+def screenshot(path: str, which: str = "main", overwrite: bool = False) -> dict:
+    """Capture visible MD main/dialog/all windows as physical-pixel PNGs (Windows).
+
+    Runs outside MD. PrintWindow(PW_RENDERFULLCONTENT) supports background windows;
+    on failure/timeout screen-copy their rectangles without raising them. Screen
+    copies can include occluding windows; capture method is returned. Some GPU
+    surfaces can render blank even when PrintWindow succeeds. Multiple captures
+    use path's stem plus PID/HWND. Existing files require overwrite=True; parent
+    directory must exist. Paths starting with backslash are rejected.
+    """
+    try:
+        return {"ok": True, "screenshots": winui.screenshot(path, which, overwrite=overwrite)}
+    except (winui.UIError, OSError, ValueError) as e:
+        return {"ok": False, "error": str(e)}
 
 
 def _md_exec(code: str) -> dict:
@@ -126,7 +176,7 @@ def import_project(path: str) -> dict:
     handles non-ASCII Windows paths. Returns which call ran and its bool result.
 
     Caveat: if MD raises a modal dialog (e.g. "save current project?"), the listener
-    deadlocks because the GUI thread is stuck in our accept loop — close MD to recover.
+    blocks the listener; inspect with md_dialogs and respond with dismiss_dialog.
     """
     code = (
         "import import_api\n"
