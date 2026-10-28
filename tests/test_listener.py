@@ -180,3 +180,54 @@ def test_no_hardcoded_author_paths():
         if f.is_file() and ".git" not in f.parts and ".venv" not in f.parts and f.suffix in {".py", ".md", ".toml"} \
                 and f.name != "test_listener.py":
             assert "azoo" not in f.read_text(encoding="utf-8", errors="ignore").lower(), f
+
+
+@pytest.mark.parametrize("code", ["result = 7", "raise RuntimeError('test failure')"])
+def test_busy_marker_during_execute_and_cleanup(listener, code):
+    import time
+
+    marker = listener["token_file"].with_name("busy.json")
+    replies = []
+    worker = threading.Thread(target=lambda: replies.append(bridge.call(
+        "execute_python", {"code": "import time; time.sleep(1)\n" + code})))
+    worker.start()
+    try:
+        deadline = time.monotonic() + 3
+        busy = None
+        raw_text = ""
+        while time.monotonic() < deadline:
+            try:
+                raw_text = marker.read_text()
+                busy = json.loads(raw_text)
+                break
+            except (OSError, ValueError):  # not written yet, or caught mid-write (Windows)
+                time.sleep(0.01)
+        assert busy is not None
+        assert set(busy) == {"method", "id", "since"}
+        assert busy["method"] == "execute_python"
+        assert busy["id"] and busy["since"]
+        assert listener["token_file"].read_text().strip() not in raw_text
+    finally:
+        worker.join(5)
+    assert not worker.is_alive()
+    assert replies
+    assert bridge.call("ping") == {"pong": True}
+    assert not marker.exists()
+
+
+def test_bridge_timeout_reports_busy(listener):
+    with pytest.raises(bridge.BridgeError, match="listener busy with execute_python since "):
+        bridge.call("execute_python", {"code": "import time; time.sleep(1)"}, timeout=0.2)
+    assert bridge.call("ping") == {"pong": True}
+    assert not listener["token_file"].with_name("busy.json").exists()
+
+
+def test_busy_marker_removed_after_handler_error(listener, monkeypatch):
+    def fail(_params):
+        raise RuntimeError("handler failed")
+
+    monkeypatch.setitem(md_listener.HANDLERS, "fail", fail)
+    with pytest.raises(bridge.BridgeError, match="handler failed"):
+        bridge.call("fail")
+    assert bridge.call("ping") == {"pong": True}
+    assert not listener["token_file"].with_name("busy.json").exists()

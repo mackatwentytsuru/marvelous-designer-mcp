@@ -1,4 +1,5 @@
 import json
+import os
 import socket
 import uuid
 from typing import Any
@@ -52,7 +53,16 @@ def call(method: str, params: dict[str, Any] | None = None, *, timeout: float | 
             sock.sendall(data)
             line = _recv_line(sock)
     except OSError as e:  # includes timeouts and connection refused
-        raise BridgeError(f"cannot talk to listener at {MD_HOST}:{MD_PORT} ({e})") from e
+        detail = ""
+        if isinstance(e, TimeoutError):
+            try:
+                path = os.path.join(os.path.dirname(token_path()), "busy.json")
+                with open(path, encoding="utf-8") as f:
+                    busy = json.load(f)
+                detail = f"; listener busy with {busy['method']} since {busy['since']}"
+            except (OSError, ValueError, KeyError, TypeError):
+                pass
+        raise BridgeError(f"cannot talk to listener at {MD_HOST}:{MD_PORT} ({e}){detail}") from e
 
     try:
         resp = json.loads(line.decode("utf-8"))
