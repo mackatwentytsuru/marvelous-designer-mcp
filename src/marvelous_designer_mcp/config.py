@@ -6,3 +6,12 @@ MD_PORT = int(os.environ.get("MD_MCP_PORT", "7421"))
 # .zprj, simulation, rendering) can take much longer. Raise MD_MCP_TIMEOUT for
 # very long renders. The MD GUI is frozen for the whole call regardless.
 MD_TIMEOUT = float(os.environ.get("MD_MCP_TIMEOUT", "120.0"))
+
+
+def token_path() -> str:
+    """Where the MD-side listener writes its per-session token (same logic as md_listener)."""
+    override = os.environ.get("MD_MCP_TOKEN_FILE")
+    if override:
+        return override
+    base = os.environ.get("LOCALAPPDATA") or os.path.join(os.path.expanduser("~"), ".local", "share")
+    return os.path.join(base, "marvelous-designer-mcp", "token")

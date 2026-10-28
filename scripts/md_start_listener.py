@@ -35,16 +35,18 @@ def _log(msg: str) -> None:
 
 
 # Locate the md_addon directory (where md_listener.py lives). When this file runs
-# as a script/plugin, __file__ is usually set; fall back to a hard-coded path that
-# you can edit if your clone is elsewhere.
+# as a script/plugin, __file__ is set. When it is pasted into the Python Editor
+# there is no __file__: set the environment variable MD_MCP_ADDON_DIR to the
+# md_addon folder, or fill in _FALLBACK_ADDON_DIR below.
+_FALLBACK_ADDON_DIR = r""  # optional: full path of this repo's md_addon folder
 try:
-    _SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-    _ADDON_DIR = os.path.normpath(os.path.join(_SCRIPT_DIR, "..", "md_addon"))
+    _ADDON_DIR = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "md_addon"))
 except NameError:
-    _ADDON_DIR = r"C:\Users\azoo\git\marvelous-designer-mcp\md_addon"  # <-- edit if needed
-
+    _ADDON_DIR = ""
 if not os.path.isdir(_ADDON_DIR):
-    _ADDON_DIR = r"C:\Users\azoo\git\marvelous-designer-mcp\md_addon"  # <-- edit if needed
+    _ADDON_DIR = os.environ.get("MD_MCP_ADDON_DIR") or _FALLBACK_ADDON_DIR
+if not _ADDON_DIR or not os.path.isdir(_ADDON_DIR):
+    raise RuntimeError("md_addon folder not found: set MD_MCP_ADDON_DIR or fill in _FALLBACK_ADDON_DIR")
 
 if _ADDON_DIR not in sys.path:
     sys.path.insert(0, _ADDON_DIR)

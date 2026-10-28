@@ -3,7 +3,7 @@ import socket
 import uuid
 from typing import Any
 
-from .config import MD_HOST, MD_PORT, MD_TIMEOUT
+from .config import MD_HOST, MD_PORT, MD_TIMEOUT, token_path
 
 
 class BridgeError(RuntimeError):
@@ -20,23 +20,39 @@ def _recv_line(sock: socket.socket) -> bytes:
     return bytes(buf).split(b"\n", 1)[0]
 
 
+def _read_token() -> str:
+    path = token_path()
+    try:
+        with open(path, encoding="utf-8") as f:
+            token = f.read().strip()
+    except OSError as e:
+        raise BridgeError(f"cannot read listener token file {path} ({e}); is the listener running?") from e
+    if not token:
+        raise BridgeError(f"listener token file {path} is empty")
+    return token
+
+
 def call(method: str, params: dict[str, Any] | None = None, *, timeout: float | None = None) -> Any:
     """Send a JSON request to the MD listener and return the result.
 
     Wire format: one JSON object per line.
-    Request:  {"id": str, "method": str, "params": dict}
+    Request:  {"id": str, "token": str, "method": str, "params": dict}
     Response: {"id": str, "result": any} or {"id": str, "error": str}
     """
     payload = {
         "id": uuid.uuid4().hex,
+        "token": _read_token(),
         "method": method,
         "params": params or {},
     }
     data = (json.dumps(payload) + "\n").encode("utf-8")
 
-    with socket.create_connection((MD_HOST, MD_PORT), timeout=timeout or MD_TIMEOUT) as sock:
-        sock.sendall(data)
-        line = _recv_line(sock)
+    try:
+        with socket.create_connection((MD_HOST, MD_PORT), timeout=timeout or MD_TIMEOUT) as sock:
+            sock.sendall(data)
+            line = _recv_line(sock)
+    except OSError as e:  # includes timeouts and connection refused
+        raise BridgeError(f"cannot talk to listener at {MD_HOST}:{MD_PORT} ({e})") from e
 
     try:
         resp = json.loads(line.decode("utf-8"))
