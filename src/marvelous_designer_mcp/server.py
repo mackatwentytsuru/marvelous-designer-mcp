@@ -179,15 +179,135 @@ def export_project(path: str) -> dict:
 
 
 @mcp.tool()
-def simulate(steps: int = 1) -> dict:
-    """Run cloth simulation via utility_api.Simulate(int).
+def import_obj(path: str, kind: str = "garment", scale: float = 1.0,
+               trace_uv_patterns: bool = True, auto_translate: bool = False) -> dict:
+    """Import OBJ; UV islands become patterns with the mesh's 3D placement and group order.
 
-    `steps` is the int the MD API expects (its exact meaning — frame/step count or a
-    mode — is version-dependent; 1 is a reasonable default). Returns the bool MD reports.
+    MD rescales 2D patterns to 3D lengths. ImportOBJ can return False after importing,
+    so inspect before/after counts. Modal dialogs can block the listener.
     """
+    kinds = {"avatar": 0, "trim": 1, "garment": 2}
+    if kind not in kinds:
+        return {"ok": False, "error": "kind must be avatar, trim, or garment"}
     code = (
-        "import utility_api\n"
-        f"steps = {int(steps)}\n"
+        "import import_api, export_api, pattern_api, ApiTypes\n"
+        "option = ApiTypes.ImportExportOption()\n"
+        f"option.ImportObjectType = {kinds[kind]!r}\n"
+        f"option.scale = {scale!r}\n"
+        f"option.bTrace2DPatternsUVMap = {trace_uv_patterns!r}\n"
+        f"option.bAutoTranslate = {auto_translate!r}\n"
+        "before = {'patterns': pattern_api.GetPatternCount(), 'avatars': export_api.GetAvatarCount()}\n"
+        f"import_api.ImportOBJ({path!r}, option)\n"
+        "after = {'patterns': pattern_api.GetPatternCount(), 'avatars': export_api.GetAvatarCount()}\n"
+        "result = {'before': before, 'after': after}\n"
+    )
+    return _md_exec(code)
+
+
+@mcp.tool()
+def render_view(path: str, view: str = "front", width: int = 800,
+                height: int = 800, fit_all: bool = False) -> dict:
+    """Render a standard view to PNG even while the listener freezes MD's GUI."""
+    views = {"bottom": 0, "front-right": 1, "front": 2, "front-left": 3,
+             "right": 4, "top": 5, "left": 6, "back": 8}
+    if view not in views:
+        return {"ok": False, "error": "unknown view; choose " + ", ".join(views)}
+    return _md_exec(
+        "import export_api\n"
+        f"returned = export_api.ExportStdViewImage({views[view]!r}, {path!r}, 0, {width!r}, {height!r}, {fit_all!r})\n"
+        f"result = {{'path': {path!r}, 'returned': returned}}\n"
+    )
+
+
+@mcp.tool()
+def new_project(save_unsaved_to: str = "") -> dict:
+    """Start a new project; refuse unsaved changes without a save path to avoid a modal dialog."""
+    return _md_exec(
+        "import utility_api, export_api\n"
+        f"save_path = {save_unsaved_to!r}\n"
+        "unsaved = utility_api.CheckZPRJForUnsavedChanges()\n"
+        "if unsaved and not save_path:\n"
+        "    result = {'ok': False, 'error': 'Unsaved changes: provide save_unsaved_to before starting a new project; a save dialog could block the listener.'}\n"
+        "else:\n"
+        "    if unsaved:\n"
+        "        export_api.ExportZPrj(save_path, False)\n"
+        "    if unsaved and utility_api.CheckZPRJForUnsavedChanges():\n"
+        "        result = {'ok': False, 'error': 'Project still has unsaved changes after saving; new project refused.'}\n"
+        "    else:\n"
+        "        result = {'returned': utility_api.NewProject()}\n"
+    )
+
+
+@mcp.tool()
+def pattern_lines(pattern_index: int) -> dict:
+    """Return parsed GetPatternLineInfo JSON: lines, lengths, locations, endpoints and bounding box."""
+    return _md_exec(
+        "import json, pattern_api\n"
+        f"result = json.loads(pattern_api.GetPatternLineInfo({pattern_index!r}))\n"
+    )
+
+
+@mcp.tool()
+def add_seam(pattern_a: int, line_a: int, pattern_b: int, line_b: int,
+             dir_a: bool = True, dir_b: bool = True,
+             ratio_a: list[float] | None = None, ratio_b: list[float] | None = None) -> dict:
+    """Sew whole lines (bool result), or partial lines (0 means success).
+
+    Both partial ratios must be [start, end], measured from each line's start,
+    with 0 <= start < end <= 1. Sew coarsely to avoid expensive remeshing per edit.
+    """
+    if (ratio_a is None) != (ratio_b is None):
+        return {"ok": False, "error": "provide both ratio_a and ratio_b, or neither"}
+    if ratio_a is not None:
+        for ratio in (ratio_a, ratio_b):
+            if (not isinstance(ratio, (list, tuple)) or len(ratio) != 2
+                    or not all(isinstance(v, (int, float)) for v in ratio)
+                    or not 0 <= ratio[0] < ratio[1] <= 1):
+                return {"ok": False, "error": "ratios must be [start, end] with 0 <= start < end <= 1"}
+        call = (f"pattern_api.AddSeamlinePairGroupPartial({pattern_a!r}, {line_a!r}, "
+                f"{ratio_a[0]!r}, {ratio_a[1]!r}, {dir_a!r}, {pattern_b!r}, {line_b!r}, "
+                f"{ratio_b[0]!r}, {ratio_b[1]!r}, {dir_b!r})")
+        success = "returned == 0"
+    else:
+        call = (f"pattern_api.AddSeamlinePairGroup({pattern_a!r}, {line_a!r}, "
+                f"{pattern_b!r}, {line_b!r}, {dir_a!r}, {dir_b!r})")
+        success = "bool(returned)"
+    return _md_exec(
+        "import pattern_api\n"
+        f"returned = {call}\n"
+        f"result = {{'ok': {success}, 'returned': returned}}\n"
+    )
+
+
+@mcp.tool()
+def set_particle_distance(mm: float, pattern_index: int | None = None) -> dict:
+    """Set particle distance for all patterns or one. Each edit remeshes the garment.
+
+    A seam on 72 small pieces took 10 s at 6 mm versus 0.95 s at 60 mm;
+    sew coarsely, then set the fine distance once at the end.
+    """
+    if pattern_index is None:
+        call = f"pattern_api.SetParticleDistanceOfPatterns({mm!r})"
+    else:
+        call = f"pattern_api.SetParticleDistanceOfPattern({pattern_index!r}, {mm!r})"
+    return _md_exec("import pattern_api\n" + f"result = {{'returned': {call}}}\n")
+
+
+@mcp.tool()
+def simulate(steps: int = 1, quality: int | None = None, mode: int | None = None) -> dict:
+    """Simulate frames, optionally setting quality (0 normal, 1 animation, 2 fitting, 3 fast).
+
+    Mode is 0 CPU or 1 GPU. When only one setting is given, the other defaults to 0.
+    """
+    if quality is not None and quality not in (0, 1, 2, 3):
+        return {"ok": False, "error": "quality must be 0, 1, 2, or 3"}
+    if mode is not None and mode not in (0, 1):
+        return {"ok": False, "error": "mode must be 0 (CPU) or 1 (GPU)"}
+    code = "import utility_api\n"
+    if quality is not None or mode is not None:
+        code += f"utility_api.SetSimulationQuality({quality if quality is not None else 0!r}, {mode if mode is not None else 0!r})\n"
+    code += (
+        f"steps = {steps!r}\n"
         "try:\n"
         "    result = {'ok': True, 'returned': utility_api.Simulate(steps), 'steps': steps}\n"
         "except TypeError as e:\n"

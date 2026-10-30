@@ -120,10 +120,52 @@ tools to work.
 | `assign_fabric(fabric_index, pattern_index, face=2)` | `fabric_api.AssignFabricToPattern`. |
 | `import_project(path)` | Open a `.zprj` / `.zpac` / `.obj` / `.fbx` / ... by absolute path (`import_api.ImportFile`). |
 | `export_project(path)` | Save the scene as a `.zprj` (`export_api.ExportZPrjW`). |
-| `simulate(steps=1)` | `utility_api.Simulate(int)`. |
+| `simulate(steps=1, quality=None, mode=None)` | Simulate frames; optionally set quality and CPU/GPU mode first. |
 | `md_api(module, contains="")` | List a module's functions; substring-filtered. Discover signatures by calling a function with wrong args and reading the `TypeError`. |
 
 Anything not covered by a wrapper: use `execute_python` directly.
+
+## Building garments from code
+
+Build an OBJ in its intended 3D placement around the avatar, including pieces
+behind or wrapped around the body. Use `import_obj(path, kind="garment")` with
+`trace_uv_patterns=True` and `auto_translate=False` (the defaults). Each UV
+island becomes a 2D pattern, the mesh retains its 3D shape, and pattern order
+follows OBJ group order. MD rescales the 2D patterns to the 3D lengths. This
+3D-first workflow can place pieces when the avatar has no arrangement points.
+`kind` also accepts `avatar` and `trim`; `scale` defaults to 1.0. Inspect the
+returned pattern/avatar counts before and after import: `ImportOBJ` may return
+False even when it imported successfully.
+
+Use `pattern_lines(pattern_index)` to inspect line indices, lengths, locations,
+endpoints and the bounding box. `add_seam(pattern_a, line_a, pattern_b, line_b)`
+sews whole lines through `AddSeamlinePairGroup` (bool result). Supply both
+`ratio_a=[start, end]` and `ratio_b=[start, end]` for
+`AddSeamlinePairGroupPartial` (0 means success). Ratios run from each line's
+start and must satisfy `0 <= start < end <= 1`; `dir_a` and `dir_b` default to True.
+
+Every edit remeshes the whole garment. In a measurement with 72 small pieces,
+one seam took 10 s at 6 mm particle distance and 0.95 s at 60 mm. Use
+`set_particle_distance(60)` before sewing, then set the fine distance once at
+the end. Pass `pattern_index` to change one piece. Deleting many sewn patterns
+one by one took over 10 minutes; `new_project()` is fast. It refuses unsaved
+changes unless `save_unsaved_to` is supplied, saves first with
+`ExportZPrj(path, False)`, and refuses to reset if changes remain unsaved.
+
+`simulate(steps=1, quality=None, mode=None)` counts steps as frames. Quality is
+0 normal, 1 animation, 2 fitting or 3 fast; mode is 0 CPU or 1 GPU. When either
+setting is supplied, the omitted setting defaults to 0.
+
+`render_view(path, view="front", width=800, height=800, fit_all=False)` writes a
+PNG even while the listener freezes the GUI. Supported views are bottom,
+front-right, front, front-left, right, top, left and back.
+
+An MD modal dialog, such as an avatar import arrangement-point information box,
+blocks the listener until a human clicks OK; the client only sees a timeout.
+During an authenticated request the listener writes `busy.json` beside its token
+file, containing only method, request ID and UTC start time. It removes the file
+when the request ends, including errors. Bridge timeout errors include this busy
+status when available; a timeout does not cancel the running operation.
 
 ## Why does MD freeze while the listener runs?
 

@@ -31,6 +31,7 @@ must `import` what it needs and bind its return value to a name called `result`.
 from __future__ import annotations
 
 import contextlib
+from datetime import datetime, timezone
 import hmac
 import io
 import json
@@ -117,7 +118,7 @@ def _token_ok(supplied, token: str) -> bool:
     return hmac.compare_digest(supplied.encode("utf-8"), token.encode("utf-8"))
 
 
-def _serve_conn(conn: socket.socket, token: str) -> bool:
+def _serve_conn(conn: socket.socket, token: str, busy_path: str) -> bool:
     """Handle one request on one connection. Returns False iff an authorized shutdown was requested."""
     with conn:
         conn.settimeout(CONN_TIMEOUT)
@@ -148,24 +149,31 @@ def _serve_conn(conn: socket.socket, token: str) -> bool:
                 _send(conn, {"id": req_id, "error": "unauthorized"})
             return True
 
-        method = req.get("method")
-        if method == "shutdown":
-            with contextlib.suppress(OSError):
-                _send(conn, {"id": req_id, "result": {"bye": True}})
-            return False
+        try:
+            with open(busy_path, "w", encoding="utf-8") as f:
+                json.dump({"method": req.get("method"), "id": req_id,
+                           "since": datetime.now(timezone.utc).isoformat()}, f)
+            method = req.get("method")
+            if method == "shutdown":
+                with contextlib.suppress(OSError):
+                    _send(conn, {"id": req_id, "result": {"bye": True}})
+                return False
 
-        handler = HANDLERS.get(method)
-        if handler is None:
-            resp = {"id": req_id, "error": f"unknown method: {method}"}
-        else:
-            try:
-                params = req.get("params")
-                resp = {"id": req_id, "result": handler(params if isinstance(params, dict) else {})}
-            except BaseException:
-                resp = {"id": req_id, "error": traceback.format_exc()}
-        with contextlib.suppress(OSError):
-            _send(conn, resp)
-        return True
+            handler = HANDLERS.get(method)
+            if handler is None:
+                resp = {"id": req_id, "error": f"unknown method: {method}"}
+            else:
+                try:
+                    params = req.get("params")
+                    resp = {"id": req_id, "result": handler(params if isinstance(params, dict) else {})}
+                except BaseException:
+                    resp = {"id": req_id, "error": traceback.format_exc()}
+            with contextlib.suppress(OSError):
+                _send(conn, resp)
+            return True
+        finally:
+            with contextlib.suppress(OSError):
+                os.remove(busy_path)
 
 
 def _restrict_to_current_user(path: str) -> None:
@@ -219,6 +227,9 @@ def serve_forever(host: str = HOST, port: int = PORT, token_path: str | None = N
     except BaseException:
         srv.close()
         raise
+    busy_path = os.path.join(os.path.dirname(token_path), "busy.json")
+    with contextlib.suppress(OSError):
+        os.remove(busy_path)
     actual_port = srv.getsockname()[1]
     print(f"[md-mcp] listening (blocking) on {host}:{actual_port}; token file: {token_path}")
     print("[md-mcp] MD GUI is frozen until a client sends 'shutdown'")
@@ -229,7 +240,7 @@ def serve_forever(host: str = HOST, port: int = PORT, token_path: str | None = N
             while True:
                 conn, _addr = srv.accept()
                 try:
-                    keep_going = _serve_conn(conn, token)
+                    keep_going = _serve_conn(conn, token, busy_path)
                 except BaseException:
                     traceback.print_exc()
                     keep_going = True
